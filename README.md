@@ -1,4 +1,4 @@
-misc
-====
+running-average.c
+=================
 
-TODO
+Calculate running average while taking rest of division into account.

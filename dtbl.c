@@ -23,6 +23,9 @@ struct dtbl *alloc_dtbl(int r, int n)
 	struct dtbl *d;
 	int i;
 
+	if (r < 1 || n < r)
+		return NULL;
+
 	d = malloc(sizeof(struct dtbl));
 	if (!d)
 		return NULL;
@@ -36,8 +39,18 @@ struct dtbl *alloc_dtbl(int r, int n)
 		return NULL;
 	}
 
+	/*
+	 * Table i (0-based) holds the mapping for i + 1 servers. A table
+	 * only makes sense once there are at least r servers to hold r
+	 * replicas, so tables for i < r - 1 are left unallocated.
+	 */
 	for (i = 0; i < n; i++) {
-		d->tbl[i] = malloc(lcm[n] / r * sizeof(**d->tbl));
+		if (i < r - 1) {
+			d->tbl[i] = NULL;
+			continue;
+		}
+
+		d->tbl[i] = malloc(lcm[i] / r * sizeof(**d->tbl));
 		if (!d->tbl[i]) {
 			while (i--)
 				free(d->tbl[i]);
@@ -70,13 +83,103 @@ void free_dtbl(struct dtbl *d)
  *
  * n starts at 0, i.e, 0 means 1 server, 1 means 2, etc.
  * tbl contains n elements - each an array of int
+ *
+ * Construction: the table for k servers is built by growing the table
+ * for k - 1 servers, so that scaling the cluster up never reshuffles
+ * data between two servers that were already in the pool - it only
+ * ever moves blocks onto the newly added server. This is what makes
+ * redistribution cost 1/k.
+ *
+ * tbl[k - 1] has lcm[k - 1] / r entries, and since lcm[k - 1] (the LCM
+ * of 1..k) is a multiple of lcm[k - 2] (the LCM of 1..k - 1), the new
+ * table is an exact integer number of tiled copies of the old one.
+ * Tiling alone reproduces the old (balanced) distribution; each of
+ * the k - 1 existing servers then has to hand exactly
+ * lcm[k - 1] / (k * (k - 1)) of its entries over to the new server so
+ * that all k servers end up holding lcm[k - 1] / k entries each -
+ * this quantity is always an integer because k and k - 1 are coprime
+ * and both divide lcm[k - 1] individually.
  */
 int gen_tbl(int r, int n, int **tbl)
 {
-	int i;
+	int i, k;
 
-	if (r < 1 || n < 1)
+	if (r < 1 || n < r)
 		return -EINVAL;
+
+	/* base case: with exactly r servers, every server holds every
+	 * block, i.e. all r bits are set in every entry.
+	 */
+	for (i = 0; i < lcm[r - 1] / r; i++)
+		tbl[r - 1][i] = (1 << r) - 1;
+
+	/* grow the cluster one server at a time */
+	for (k = r + 1; k <= n; k++) {
+		int idx = k - 1, prev = k - 2;
+		int sz_new = lcm[idx] / r;
+		int sz_old = lcm[prev] / r;
+		int move = lcm[idx] / (k * (k - 1));
+		int new_bit = 1 << (k - 1);
+		int *need;
+		char *done;
+		int s, left;
+
+		need = malloc((k - 1) * sizeof(*need));
+		done = calloc(sz_new, sizeof(*done));
+		if (!need || !done) {
+			free(need);
+			free(done);
+			return -ENOMEM;
+		}
+
+		for (s = 0; s < k - 1; s++)
+			need[s] = move;
+
+		/* tile the previous, already-balanced table */
+		for (i = 0; i < sz_new; i++)
+			tbl[idx][i] = tbl[prev][i % sz_old];
+
+		/* hand `move` entries from every existing server over to
+		 * the new one, spreading the picks across the table
+		 * instead of taking one contiguous run.
+		 */
+		left = (k - 1) * move;
+		while (left) {
+			int progress = 0;
+
+			for (i = 0; i < sz_new; i++) {
+				if (done[i])
+					continue;
+
+				for (s = 0; s < k - 1; s++) {
+					if (!need[s] ||
+					    !(tbl[idx][i] & (1 << s)))
+						continue;
+
+					tbl[idx][i] &= ~(1 << s);
+					tbl[idx][i] |= new_bit;
+					done[i] = 1;
+					need[s]--;
+					left--;
+					progress = 1;
+					break;
+				}
+			}
+
+			/* a full sweep placed nothing - the remaining
+			 * `need[]` can never be satisfied, bail out
+			 * instead of spinning forever.
+			 */
+			if (!progress)
+				break;
+		}
+
+		free(need);
+		free(done);
+
+		if (left)
+			return -EINVAL;
+	}
 
 	return 0;
 }

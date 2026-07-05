@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 #include <stdio.h>
 #include <stdlib.h>
 
-struct dtbl {
-	int r;
-	int n;
-	int **tbl;
-};
-
-extern struct dtbl *alloc_dtbl(int r, int n);
-extern void free_dtbl(struct dtbl *d);
-extern int gen_tbl(int r, int n, int **tbl);
-
-/* mirrors the static table in dtbl.c, only used to size-check here */
-static int lcm[] = {1, 2, 6, 12, 60, 60, 420, 840, 2520, 2520, 27720, 27720,
-		    360360, 360360, 360360, 720720, 12252240, 12252240,
-		    232792560, 232792560, 232792560, 232792560};
+#include "dtbl.h"
 
 static int popcount(int x)
 {
@@ -47,7 +35,7 @@ static int check(int r, int n)
 
 	for (k = r; k <= n; k++) {
 		int idx = k - 1;
-		int sz = lcm[idx] / r;
+		int sz = dtbl_size(r, k);
 		int *cnt = calloc(k, sizeof(*cnt));
 
 		for (i = 0; i < sz; i++) {
@@ -62,7 +50,7 @@ static int check(int r, int n)
 		}
 
 		for (s = 0; s < k; s++) {
-			int target = lcm[idx] / k;
+			int target = sz * r / k;
 
 			if (cnt[s] != target) {
 				printf("r=%d n=%d k=%d server %d holds %d, want %d\n",
@@ -77,7 +65,7 @@ static int check(int r, int n)
 		 */
 		if (k > r) {
 			int prev_idx = k - 2;
-			int sz_old = lcm[prev_idx] / r;
+			int sz_old = dtbl_size(r, k - 1);
 			int moved = 0, moved_between_old = 0;
 
 			for (i = 0; i < sz; i++) {

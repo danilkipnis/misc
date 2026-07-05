@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 
+#include "dtbl.h"
+
 /*
- * Least common multiplier of the sequence {1, 2, 3, ... , 22}.
+ * Least common multiplier of the sequence {1, 2, 3, ... , MAX_SERVERS}.
  * Size of an array needed for number of replicas r and number of servers n
  * is given by lcm(n)/r. I.e. for raid0, r=1.
  */
@@ -11,19 +14,20 @@ static int lcm[] = {1, 2, 6, 12, 60, 60, 420, 840, 2520, 2520, 27720, 27720,
 		    360360, 360360, 360360, 720720, 12252240, 12252240,
 		    232792560, 232792560, 232792560, 232792560};
 
+int dtbl_size(int r, int k)
+{
+	if (r < 1 || k < 1 || k > MAX_SERVERS)
+		return -EINVAL;
 
-struct dtbl {
-	int r;		/* number of replicas, replication factor */
-	int n;		/* number of servers in the cluster */
-	int **tbl;	/* arrays */
-};
+	return lcm[k - 1] / r;
+}
 
 struct dtbl *alloc_dtbl(int r, int n)
 {
 	struct dtbl *d;
 	int i;
 
-	if (r < 1 || n < r)
+	if (r < 1 || n < r || n > MAX_SERVERS)
 		return NULL;
 
 	d = malloc(sizeof(struct dtbl));
@@ -104,7 +108,7 @@ int gen_tbl(int r, int n, int **tbl)
 {
 	int i, k;
 
-	if (r < 1 || n < r)
+	if (r < 1 || n < r || n > MAX_SERVERS)
 		return -EINVAL;
 
 	/* base case: with exactly r servers, every server holds every
@@ -200,15 +204,54 @@ int get_srv(size_t b, short r, short n, int **tbl)
 	return tbl[n][b % (lcm[n] / r)];
 }
 
+/*
+ * Print the table for k servers the same way dtbl.md does: one row per
+ * server, one column per table entry, 'x' if that server holds the
+ * entry, '.' otherwise.
+ */
+static void print_tbl(struct dtbl *d, int k)
+{
+	int sz = dtbl_size(d->r, k);
+	int s, i;
+
+	for (s = 0; s < k; s++) {
+		printf("%d ", s + 1);
+		for (i = 0; i < sz; i++)
+			putchar(d->tbl[k - 1][i] & (1 << s) ? 'x' : '.');
+		putchar('\n');
+	}
+}
+
 int main(int argc, char **argv)
 {
-	int **tbl;
-	int ret;
+	int r, n, k, ret;
 	struct dtbl *d;
 
-	d = alloc_dtbl(1, 1);
-	if (!d)
+	if (argc != 3) {
+		fprintf(stderr, "usage: %s <replicas> <servers>\n", argv[0]);
+		return -EINVAL;
+	}
+
+	r = atoi(argv[1]);
+	n = atoi(argv[2]);
+
+	d = alloc_dtbl(r, n);
+	if (!d) {
+		fprintf(stderr, "alloc_dtbl(%d, %d) failed\n", r, n);
 		return -ENOMEM;
+	}
+
+	ret = gen_tbl(r, n, d->tbl);
+	if (ret) {
+		fprintf(stderr, "gen_tbl(%d, %d) failed: %d\n", r, n, ret);
+		free_dtbl(d);
+		return ret;
+	}
+
+	for (k = r; k <= n; k++) {
+		printf("-- %d server(s) --\n", k);
+		print_tbl(d, k);
+	}
 
 	free_dtbl(d);
 

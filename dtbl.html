@@ -12,13 +12,27 @@
     margin: 0;
     padding: 20px;
   }
-  .controls { margin-bottom: 20px; }
+  .controls {
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+  }
   input[type=number] {
     background: #000;
     border: 1px solid #444;
     color: #e6e8ec;
     padding: 6px 8px;
     width: 70px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    margin-right: 8px;
+  }
+  select {
+    background: #000;
+    border: 1px solid #444;
+    color: #e6e8ec;
+    padding: 6px 8px;
     font-family: inherit;
     font-size: 0.95rem;
     margin-right: 8px;
@@ -33,7 +47,8 @@
     cursor: pointer;
   }
   button:hover { border-color: #888; }
-  .error { color: #ff6b6b; margin-top: 10px; white-space: pre-wrap; }
+  .error { color: #ff6b6b; margin: -10px 0 16px; white-space: pre-wrap; }
+  .error:empty { display: none; }
   pre {
     font-size: 0.9rem;
     line-height: 1.45;
@@ -46,9 +61,13 @@
 <div class="controls">
   <input type="number" id="r" min="1" max="22" title="replicas (r)">
   <input type="number" id="n" min="1" max="22" title="servers (n)">
+  <select id="mode" title="new server's entries: packed or spread">
+    <option value="packed">..</option>
+    <option value="spread">. .</option>
+  </select>
   <button id="generate">dtbl</button>
-  <div class="error" id="error"></div>
 </div>
+<div class="error" id="error"></div>
 <pre id="output"></pre>
 
 <script>
@@ -70,15 +89,78 @@ function dtblSize(r, k) {
 }
 
 /*
+ * Donation placement, "packed" (original dtbl.c behavior):
+ * sweep entries left to right, take one donation per entry from the
+ * first still-owing server holding it, until all quotas are paid.
+ * The new server's entries end up as a contiguous run at the start.
+ */
+function placePacked(newTbl, need, done, szNew, k, newBit) {
+  let left = 0;
+  for (const q of need) left += q;
+  while (left) {
+    let progress = false;
+    for (let i = 0; i < szNew && left; i++) {
+      if (done[i]) continue;
+      for (let s = 0; s < k - 1; s++) {
+        if (!need[s] || !(newTbl[i] & (1 << s))) continue;
+        newTbl[i] &= ~(1 << s);
+        newTbl[i] |= newBit;
+        done[i] = 1;
+        need[s]--;
+        left--;
+        progress = true;
+        break;
+      }
+    }
+    if (!progress) break; // bail instead of spinning forever
+  }
+  return left === 0;
+}
+
+/*
+ * Donation placement, "spread": the d-th of D donations targets entry
+ * floor(d*szNew/D), i.e. donations land uniformly across the table
+ * instead of piling up at the start. If a target is ineligible, probe
+ * forward (wrapping). At each spot the eligible server with the largest
+ * remaining debt pays, keeping per-server donations interleaved too.
+ */
+function placeSpread(newTbl, need, done, szNew, k, newBit) {
+  let D = 0;
+  for (const q of need) D += q;
+  for (let d = 0; d < D; d++) {
+    const target = Math.floor(d * szNew / D);
+    let placed = false;
+    for (let off = 0; off < szNew && !placed; off++) {
+      const i = (target + off) % szNew;
+      if (done[i]) continue;
+      let best = -1;
+      for (let s = 0; s < k - 1; s++) {
+        if (need[s] && (newTbl[i] & (1 << s)) &&
+            (best < 0 || need[s] > need[best])) best = s;
+      }
+      if (best < 0) continue;
+      newTbl[i] &= ~(1 << best);
+      newTbl[i] |= newBit;
+      done[i] = 1;
+      need[best]--;
+      placed = true;
+    }
+    if (!placed) return false;
+  }
+  return true;
+}
+
+/*
  * Generate distribution tables for r replicas over r, r+1, ..., n servers.
  * Returns an array `tbl` of length n (0-based), where tbl[k-1] is the table
  * for k servers: an Int array of dtblSize(r, k) bitmaps.
  *
  * Growing the cluster from k-1 to k servers only ever moves entries onto
  * the newly added server, never reshuffling data between servers that
- * were already in the pool.
+ * were already in the pool. `mode` picks where the moved entries land:
+ * 'packed' (contiguous run, as in dtbl.c) or 'spread' (uniform).
  */
-function genTbl(r, n) {
+function genTbl(r, n, mode) {
   if (r < 1 || n < r || n > MAX_SERVERS) {
     throw new Error(`gen_tbl(${r}, ${n}) failed: -EINVAL`);
   }
@@ -103,29 +185,11 @@ function genTbl(r, n) {
     // tile the previous, already-balanced table
     for (let i = 0; i < szNew; i++) newTbl[i] = tbl[prev][i % szOld];
 
-    // hand `move` entries from every existing server to the new one,
-    // spreading the picks across the table instead of one contiguous run
-    let left = (k - 1) * move;
-    while (left) {
-      let progress = false;
-      for (let i = 0; i < szNew && left; i++) {
-        if (done[i]) continue;
-        for (let s = 0; s < k - 1; s++) {
-          if (!need[s] || !(newTbl[i] & (1 << s))) continue;
-          newTbl[i] &= ~(1 << s);
-          newTbl[i] |= newBit;
-          done[i] = 1;
-          need[s]--;
-          left--;
-          progress = true;
-          break;
-        }
-      }
-      // a full sweep placed nothing: bail instead of spinning forever
-      if (!progress) break;
-    }
+    const ok = (mode === 'spread')
+      ? placeSpread(newTbl, need, done, szNew, k, newBit)
+      : placePacked(newTbl, need, done, szNew, k, newBit);
 
-    if (left) throw new Error(`gen_tbl(${r}, ${n}) failed: -EINVAL (could not balance at k=${k})`);
+    if (!ok) throw new Error(`gen_tbl(${r}, ${n}) failed: -EINVAL (could not balance at k=${k})`);
     tbl[idx] = newTbl;
   }
 
@@ -166,6 +230,7 @@ function generate() {
 
   const r = parseInt(document.getElementById('r').value, 10);
   const n = parseInt(document.getElementById('n').value, 10);
+  const mode = document.getElementById('mode').value;
 
   if (!Number.isInteger(r) || !Number.isInteger(n)) {
     errorEl.textContent = 'r and n must be integers.';
@@ -181,7 +246,7 @@ function generate() {
   }
 
   try {
-    const tbl = genTbl(r, n);
+    const tbl = genTbl(r, n, mode);
     let blocks = [];
     for (let k = r; k <= n; k++) {
       blocks.push(printTbl(tbl, r, k, n));
@@ -194,6 +259,7 @@ function generate() {
 }
 
 document.getElementById('generate').addEventListener('click', generate);
+
 // first ever visit (per browser): 3 7; every later load: random
 if (!localStorage.getItem('dtbl_seen')) {
   localStorage.setItem('dtbl_seen', '1');

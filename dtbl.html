@@ -19,35 +19,28 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  input[type=number] {
+  input[type=number], select, button {
+    box-sizing: border-box;
+    height: 34px;
+    font-family: inherit;
+    font-size: 0.95rem;
     background: #000;
     border: 1px solid #444;
     color: #e6e8ec;
+  }
+  input[type=number] {
     padding: 6px 8px;
-    width: 4ch;
-    font-family: inherit;
-    font-size: 0.95rem;
+    width: 6ch;
   }
   select {
-    background: #000;
-    border: 1px solid #444;
-    color: #e6e8ec;
     padding: 6px 8px;
-    font-family: inherit;
-    font-size: 0.95rem;
   }
   .rel {
     color: #666;
-    font-size: 0.95rem;
     user-select: none;
   }
   button {
-    background: #000;
-    border: 1px solid #444;
-    color: #e6e8ec;
     padding: 6px 14px;
-    font-family: inherit;
-    font-size: 0.95rem;
     cursor: pointer;
   }
   button:hover { border-color: #888; }

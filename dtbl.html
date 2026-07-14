@@ -216,7 +216,9 @@ let workerActive = false;
 
 try {
   const blob = new Blob([workerCode], { type: 'application/javascript' });
-  worker = new Worker(URL.createObjectURL(blob));
+  const workerUrl = URL.createObjectURL(blob);
+  worker = new Worker(workerUrl);
+  URL.revokeObjectURL(workerUrl);
   
   worker.postMessage({ ping: true });
   

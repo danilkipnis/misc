@@ -176,6 +176,10 @@ ${placeSpread.toString()}
 ${genTbl.toString()}
 
 self.onmessage = function(e) {
+  if (e.data.ping) {
+    self.postMessage({ pong: true });
+    return;
+  }
   const { r, n, mode } = e.data;
   try {
     const tbl = genTbl(r, n, mode);
@@ -187,20 +191,28 @@ self.onmessage = function(e) {
 `;
 
 let worker = null;
+let workerActive = false;
+
 try {
   const blob = new Blob([workerCode], { type: 'application/javascript' });
   worker = new Worker(URL.createObjectURL(blob));
   
+  // Send an immediate handshake ping to verify the worker is actually running
+  worker.postMessage({ ping: true });
+  
   worker.onmessage = function(e) {
-    displayResult(e.data);
+    if (e.data.pong) {
+      workerActive = true; // The worker is alive and responsive!
+    } else {
+      displayResult(e.data);
+    }
   };
   
   worker.onerror = function() {
-    // If worker fails, nullify it to trigger the main-thread fallback
-    worker = null;
+    workerActive = false;
   };
 } catch (e) {
-  worker = null;
+  workerActive = false;
 }
 
 function displayResult(data) {
@@ -268,11 +280,11 @@ function generate() {
   document.getElementById('generate').textContent = 'Calculating...';
   outEl.textContent = '';
 
-  if (worker) {
-    // Attempt multi-threaded run
+  if (worker && workerActive) {
+    // Web Worker responded to ping, safe to run asynchronously
     worker.postMessage({ r, n, mode });
   } else {
-    // Fallback immediately on the main thread if worker is blocked/unsupported
+    // Web Worker failed the handshake, calculate on main thread instantly
     setTimeout(() => {
       try {
         const tbl = genTbl(r, n, mode);

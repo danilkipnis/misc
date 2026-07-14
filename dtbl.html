@@ -98,6 +98,27 @@ function dtblSize(r, k) {
   return Math.floor(lcm[k - 1] / r);
 }
 
+// Rough memory a browser tab can burn on this feature before mobile
+// devices start to jank: generous headroom under both the OOM point
+// and, more importantly, the CPU cost of laying out near-megachar
+// single lines of monospace text.
+const MEMORY_BUDGET_BYTES = 30 * 1024 * 1024;
+
+// Estimate bytes needed: the Uint32Array kept per level for rendering,
+// plus the printed text (each level renders as k rows of up to
+// dtblSize(r, k+1) chars; stored once as a JS string, once in the DOM).
+function estimateBytes(r, n) {
+  let typedArrayBytes = 0;
+  let renderChars = 0;
+  for (let k = r; k <= n; k++) {
+    const sz = dtblSize(r, k);
+    typedArrayBytes += sz * 4;
+    const szNext = (k < n) ? dtblSize(r, k + 1) : sz;
+    renderChars += k * szNext;
+  }
+  return typedArrayBytes + renderChars * 2;
+}
+
 /*
  * Algorithms optimized to use TypedArrays (Uint32Array/Uint8Array) for 90%+ memory savings
  */
@@ -292,15 +313,13 @@ function generate() {
     return;
   }
 
-  // Explicit calculation memory safeguard
-  let totalAllocatedElements = 0;
-  for (let k = r; k <= n; k++) {
-    totalAllocatedElements += dtblSize(r, k);
-  }
+  // Memory safeguard: estimate actual bytes needed (typed arrays + rendered text)
+  const estimatedBytes = estimateBytes(r, n);
 
-  // Stop if we are about to allocate more than 1,000,000 total indexes across the generation steps
-  if (totalAllocatedElements > 1000000) {
-    errorEl.textContent = `Memory limit exceeded! Total estimated table sequence allocation is ${totalAllocatedElements.toLocaleString()} indices.\nTry a smaller server limit (n) or a larger replica factor (r).`;
+  if (estimatedBytes > MEMORY_BUDGET_BYTES) {
+    const estMB = (estimatedBytes / (1024 * 1024)).toFixed(1);
+    const capMB = (MEMORY_BUDGET_BYTES / (1024 * 1024)).toFixed(0);
+    errorEl.textContent = `Memory limit exceeded! Estimated ~${estMB} MB, budget is ${capMB} MB.\nTry a smaller server limit (n) or a larger replica factor (r).`;
     return;
   }
 

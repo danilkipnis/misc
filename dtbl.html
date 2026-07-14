@@ -87,12 +87,13 @@ function dtblSize(r, k) {
   return Math.floor(lcm[k - 1] / r);
 }
 
-/*
- * Donation placement, "packed" (original dtbl.c behavior):
- * sweep entries left to right, take one donation per entry from the
- * first still-owing server holding it, until all quotas are paid.
- * The new server's entries end up as a contiguous run at the start.
- */
+// Construct the Worker code as an inline string block
+const workerCode = `
+const lcm = [1, 2, 6, 12, 60, 60, 420, 840, 2520, 2520, 27720, 27720,
+             360360, 360360, 360360, 720720, 12252240, 12252240,
+             232792560, 232792560, 232792560, 232792560];
+const MAX_SERVERS = lcm.length;
+
 function placePacked(newTbl, need, done, szNew, k, newBit) {
   let left = 0;
   for (const q of need) left += q;
@@ -111,18 +112,11 @@ function placePacked(newTbl, need, done, szNew, k, newBit) {
         break;
       }
     }
-    if (!progress) break; // bail instead of spinning forever
+    if (!progress) break;
   }
   return left === 0;
 }
 
-/*
- * Donation placement, "spread": the d-th of D donations targets entry
- * floor(d*szNew/D), i.e. donations land uniformly across the table
- * instead of piling up at the start. If a target is ineligible, probe
- * forward (wrapping). At each spot the eligible server with the largest
- * remaining debt pays, keeping per-server donations interleaved too.
- */
 function placeSpread(newTbl, need, done, szNew, k, newBit) {
   let D = 0;
   for (const q of need) D += q;
@@ -149,51 +143,66 @@ function placeSpread(newTbl, need, done, szNew, k, newBit) {
   return true;
 }
 
-/*
- * Generate distribution tables for r replicas over r, r+1, ..., n servers.
- * Returns an array `tbl` of length n (0-based), where tbl[k-1] is the table
- * for k servers: an Int array of dtblSize(r, k) bitmaps.
- *
- * Growing the cluster from k-1 to k servers only ever moves entries onto
- * the newly added server, never reshuffling data between servers that
- * were already in the pool. `mode` picks where the moved entries land:
- * 'packed' (contiguous run, as in dtbl.c) or 'spread' (uniform).
- */
 function genTbl(r, n, mode) {
   if (r < 1 || n < r || n > MAX_SERVERS) {
-    throw new Error(`gen_tbl(${r}, ${n}) failed: -EINVAL`);
+    throw new Error('gen_tbl(' + r + ', ' + n + ') failed: -EINVAL');
   }
-
   const tbl = new Array(n).fill(null);
-
-  // base case: with exactly r servers, every server holds every block.
   tbl[r - 1] = new Array(Math.floor(lcm[r - 1] / r)).fill((1 << r) - 1);
-
-  // grow the cluster one server at a time
   for (let k = r + 1; k <= n; k++) {
     const idx = k - 1, prev = k - 2;
     const szNew = Math.floor(lcm[idx] / r);
     const szOld = Math.floor(lcm[prev] / r);
     const move = Math.floor(lcm[idx] / (k * (k - 1)));
     const newBit = 1 << (k - 1);
-
     const need = new Array(k - 1).fill(move);
     const done = new Array(szNew).fill(0);
     const newTbl = new Array(szNew);
-
-    // tile the previous, already-balanced table
     for (let i = 0; i < szNew; i++) newTbl[i] = tbl[prev][i % szOld];
-
     const ok = (mode === 'spread')
       ? placeSpread(newTbl, need, done, szNew, k, newBit)
       : placePacked(newTbl, need, done, szNew, k, newBit);
-
-    if (!ok) throw new Error(`gen_tbl(${r}, ${n}) failed: -EINVAL (could not balance at k=${k})`);
+    if (!ok) throw new Error('gen_tbl(' + r + ', ' + n + ') failed: -EINVAL (could not balance at k=' + k + ')');
     tbl[idx] = newTbl;
   }
-
   return tbl;
 }
+
+self.onmessage = function(e) {
+  const { r, n, mode } = e.data;
+  try {
+    const tbl = genTbl(r, n, mode);
+    self.postMessage({ success: true, tbl });
+  } catch (error) {
+    self.postMessage({ success: false, error: error.message });
+  }
+};
+`;
+
+// Turn string into an executable application URI blob
+const blob = new Blob([workerCode], { type: 'application/javascript' });
+const worker = new Worker(URL.createObjectURL(blob));
+
+// Handle async callbacks from the background calculation script
+worker.onmessage = function(e) {
+  const errorEl = document.getElementById('error');
+  const outEl = document.getElementById('output');
+  const r = parseInt(document.getElementById('r').value, 10);
+  const n = parseInt(document.getElementById('n').value, 10);
+
+  if (e.data.success) {
+    const tbl = e.data.tbl;
+    let blocks = [];
+    for (let k = r; k <= n; k++) {
+      blocks.push(printTbl(tbl, r, k, n));
+    }
+    outEl.textContent = blocks.join('\n\n');
+  } else {
+    errorEl.textContent = e.data.error;
+    outEl.textContent = '';
+  }
+  document.getElementById('generate').textContent = 'dtbl';
+};
 
 /*
  * Render the table for k servers the way dtbl.md does:
@@ -244,17 +253,12 @@ function generate() {
     return;
   }
 
-  try {
-    const tbl = genTbl(r, n, mode);
-    let blocks = [];
-    for (let k = r; k <= n; k++) {
-      blocks.push(printTbl(tbl, r, k, n));
-    }
-    outEl.textContent = blocks.join('\n\n');
-  } catch (e) {
-    errorEl.textContent = e.message;
-    outEl.textContent = '';
-  }
+  // Set execution loading text & clear window output
+  document.getElementById('generate').textContent = 'Calculating...';
+  outEl.textContent = '';
+
+  // Offload payload to internal background worker execution thread
+  worker.postMessage({ r, n, mode });
 }
 
 document.getElementById('generate').addEventListener('click', generate);

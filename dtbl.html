@@ -322,7 +322,14 @@ function generate() {
 }
 
 document.getElementById('generate').addEventListener('click', generate);
-
+['r', 'n', 'mode'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      generate();
+    }
+  });
+});
 // first ever visit (per browser): 3 7; every later load: random
 if (!localStorage.getItem('dtbl_seen')) {
   localStorage.setItem('dtbl_seen', '1');

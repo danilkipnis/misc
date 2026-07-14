@@ -87,13 +87,9 @@ function dtblSize(r, k) {
   return Math.floor(lcm[k - 1] / r);
 }
 
-// Construct the Worker code as an inline string block
-const workerCode = `
-const lcm = [1, 2, 6, 12, 60, 60, 420, 840, 2520, 2520, 27720, 27720,
-             360360, 360360, 360360, 720720, 12252240, 12252240,
-             232792560, 232792560, 232792560, 232792560];
-const MAX_SERVERS = lcm.length;
-
+/*
+ * Algorithms duplicated for main-thread fallback usage if Web Workers are blocked
+ */
 function placePacked(newTbl, need, done, szNew, k, newBit) {
   let left = 0;
   for (const q of need) left += q;
@@ -168,6 +164,17 @@ function genTbl(r, n, mode) {
   return tbl;
 }
 
+// Construct the Worker code as an inline string block
+const workerCode = `
+const lcm = [1, 2, 6, 12, 60, 60, 420, 840, 2520, 2520, 27720, 27720,
+             360360, 360360, 360360, 720720, 12252240, 12252240,
+             232792560, 232792560, 232792560, 232792560];
+const MAX_SERVERS = lcm.length;
+
+${placePacked.toString()}
+${placeSpread.toString()}
+${genTbl.toString()}
+
 self.onmessage = function(e) {
   const { r, n, mode } = e.data;
   try {
@@ -179,40 +186,45 @@ self.onmessage = function(e) {
 };
 `;
 
-// Turn string into an executable application URI blob
-const blob = new Blob([workerCode], { type: 'application/javascript' });
-const worker = new Worker(URL.createObjectURL(blob));
+let worker = null;
+try {
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  worker = new Worker(URL.createObjectURL(blob));
+  
+  worker.onmessage = function(e) {
+    displayResult(e.data);
+  };
+  
+  worker.onerror = function() {
+    // If worker fails, nullify it to trigger the main-thread fallback
+    worker = null;
+  };
+} catch (e) {
+  worker = null;
+}
 
-// Handle async callbacks from the background calculation script
-worker.onmessage = function(e) {
+function displayResult(data) {
   const errorEl = document.getElementById('error');
   const outEl = document.getElementById('output');
   const r = parseInt(document.getElementById('r').value, 10);
   const n = parseInt(document.getElementById('n').value, 10);
 
-  if (e.data.success) {
-    const tbl = e.data.tbl;
+  if (data.success) {
+    const tbl = data.tbl;
     let blocks = [];
     for (let k = r; k <= n; k++) {
       blocks.push(printTbl(tbl, r, k, n));
     }
     outEl.textContent = blocks.join('\n\n');
   } else {
-    errorEl.textContent = e.data.error;
+    errorEl.textContent = data.error;
     outEl.textContent = '';
   }
   document.getElementById('generate').textContent = 'dtbl';
-};
+}
 
 /*
  * Render the table for k servers the way dtbl.md does:
- *
- * Each row is printed raw at its own size sz = dtbl_size(r, k). Then,
- * to show that the pattern conceptually repeats to the right (blocks
- * are looked up mod sz), the pattern is echoed with 'x' replaced by '.'
- * enough times to reach the width of the next table, dtbl_size(r, k+1).
- * When the next size equals the current one (lcm doesn't grow), or for
- * the last table, no dots are appended.
  */
 function printTbl(tbl, r, k, n) {
   const sz = dtblSize(r, k);
@@ -253,12 +265,23 @@ function generate() {
     return;
   }
 
-  // Set execution loading text & clear window output
   document.getElementById('generate').textContent = 'Calculating...';
   outEl.textContent = '';
 
-  // Offload payload to internal background worker execution thread
-  worker.postMessage({ r, n, mode });
+  if (worker) {
+    // Attempt multi-threaded run
+    worker.postMessage({ r, n, mode });
+  } else {
+    // Fallback immediately on the main thread if worker is blocked/unsupported
+    setTimeout(() => {
+      try {
+        const tbl = genTbl(r, n, mode);
+        displayResult({ success: true, tbl });
+      } catch (e) {
+        displayResult({ success: false, error: e.message });
+      }
+    }, 0);
+  }
 }
 
 document.getElementById('generate').addEventListener('click', generate);

@@ -34,6 +34,17 @@
   }
   select {
     padding: 6px 8px;
+    max-width: 100px;
+    opacity: 1;
+    transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, border-color 0.15s ease, margin 0.15s ease;
+  }
+  .controls:not(:focus-within):not(:hover) select {
+    max-width: 0;
+    opacity: 0;
+    padding: 6px 0;
+    margin: 0;
+    border-color: transparent;
+    overflow: hidden;
   }
   .rel {
     color: #666;

@@ -340,17 +340,6 @@ function generate() {
   }
 }
 
-document.getElementById('generate').addEventListener('click', generate);
-['r', 'n', 'mode'].forEach(id => {
-  document.getElementById(id).addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      generate();
-    }
-  });
-});
-// ==================== URL PARAMS + INIT ====================
-
 function updateURL() {
   const r = document.getElementById('r').value;
   const n = document.getElementById('n').value;
@@ -361,7 +350,7 @@ function updateURL() {
   params.set('n', n);
   if (mode === 'spread') params.set('mode', mode);
   
-  const newURL = `\( {window.location.pathname}? \){params.toString()}`;
+  const newURL = `${window.location.pathname}?${params.toString()}`;
   history.replaceState(null, '', newURL);
 }
 

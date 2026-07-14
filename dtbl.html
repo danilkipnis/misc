@@ -25,7 +25,14 @@
     font-family: inherit;
     font-size: 0.95rem;
     background: #000;
-    border: 1px solid #444;
+    border: 1px solid #333;
+    color: #777;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  input[type=number]:hover, input[type=number]:focus,
+  select:hover, select:focus,
+  button:hover, button:focus {
+    border-color: #888;
     color: #e6e8ec;
   }
   input[type=number] {
@@ -55,7 +62,6 @@
     padding: 6px 14px;
     cursor: pointer;
   }
-  button:hover { border-color: #888; }
   .error { color: #ff6b6b; margin: -10px 0 16px; white-space: pre-wrap; }
   .error:empty { display: none; }
   pre {

@@ -376,9 +376,15 @@ function loadFromURL() {
 }
 
 function initValues() {
+  // updateURL() keeps ?r=&n=&mode= synced into the address bar during normal
+  // use, so a plain page refresh also carries params now. Only honor them on
+  // a genuine fresh navigation (typed/pasted/shared link, or back/forward) —
+  // not on a reload, where the old random-on-refresh behavior should still apply.
+  const navEntry = performance.getEntriesByType('navigation')[0];
+  const isReload = navEntry ? navEntry.type === 'reload' : false;
   const hasURLParams = window.location.search.length > 1;
-  
-  if (hasURLParams) {
+
+  if (hasURLParams && !isReload) {
     loadFromURL();
   } else if (!localStorage.getItem('dtbl_seen')) {
     localStorage.setItem('dtbl_seen', '1');

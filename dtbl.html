@@ -349,18 +349,67 @@ document.getElementById('generate').addEventListener('click', generate);
     }
   });
 });
-// first ever visit (per browser): 3 7; every later load: random
-if (!localStorage.getItem('dtbl_seen')) {
-  localStorage.setItem('dtbl_seen', '1');
-  document.getElementById('r').value = 3;
-  document.getElementById('n').value = 7;
-} else {
-  const r0 = 1 + Math.floor(Math.random() * 4);
-  const nMin = Math.max(r0 + 1, 3);
-  document.getElementById('r').value = r0;
-  document.getElementById('n').value = nMin + Math.floor(Math.random() * (8 - nMin + 1));
+// ==================== URL PARAMS + INIT ====================
+
+function updateURL() {
+  const r = document.getElementById('r').value;
+  const n = document.getElementById('n').value;
+  const mode = document.getElementById('mode').value;
+  
+  const params = new URLSearchParams();
+  params.set('r', r);
+  params.set('n', n);
+  if (mode === 'spread') params.set('mode', mode);
+  
+  const newURL = `\( {window.location.pathname}? \){params.toString()}`;
+  history.replaceState(null, '', newURL);
 }
-generate();
+
+function loadFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const rParam = params.get('r');
+  const nParam = params.get('n');
+  const modeParam = params.get('mode');
+  
+  if (rParam) document.getElementById('r').value = parseInt(rParam, 10);
+  if (nParam) document.getElementById('n').value = parseInt(nParam, 10);
+  if (modeParam) document.getElementById('mode').value = modeParam;
+}
+
+function initValues() {
+  const hasURLParams = window.location.search.length > 1;
+  
+  if (hasURLParams) {
+    loadFromURL();
+  } else if (!localStorage.getItem('dtbl_seen')) {
+    localStorage.setItem('dtbl_seen', '1');
+    document.getElementById('r').value = 3;
+    document.getElementById('n').value = 7;
+  } else {
+    const r0 = 1 + Math.floor(Math.random() * 4);
+    const nMin = Math.max(r0 + 1, 3);
+    document.getElementById('r').value = r0;
+    document.getElementById('n').value = nMin + Math.floor(Math.random() * (8 - nMin + 1));
+  }
+}
+
+// Setup listeners (Enter key + URL updates)
+document.getElementById('generate').addEventListener('click', generate);
+
+['r', 'n', 'mode'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('change', updateURL);
+  el.addEventListener('input', updateURL);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      generate();
+    }
+  });
+});
+
+initValues();
+generate();  // initial generation
 </script>
 </body>
 </html>

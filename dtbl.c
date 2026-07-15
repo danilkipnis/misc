@@ -215,9 +215,8 @@ static void print_tbl(struct dtbl *d, int k)
 	int s, i;
 
 	for (s = 0; s < k; s++) {
-		printf("%d ", s + 1);
 		for (i = 0; i < sz; i++)
-			putchar(d->tbl[k - 1][i] & (1 << s) ? 'x' : '.');
+			putchar(d->tbl[k - 1][i] & (1 << s) ? 'x' : ' ');
 		putchar('\n');
 	}
 }
@@ -249,8 +248,8 @@ int main(int argc, char **argv)
 	}
 
 	for (k = r; k <= n; k++) {
-		printf("-- %d server(s) --\n", k);
 		print_tbl(d, k);
+		putchar('\n');
 	}
 
 	free_dtbl(d);

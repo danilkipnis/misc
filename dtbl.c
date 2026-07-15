@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 
 #include "dtbl.h"
@@ -205,29 +206,59 @@ int get_srv(size_t b, short r, short n, int **tbl)
 }
 
 /*
- * Print the table for k servers the same way dtbl.md does: one row per
- * server, one column per table entry, 'x' if that server holds the
- * entry, '.' otherwise.
+ * Print the table for k servers the same way dtbl.md/dtbl.html does: one
+ * row per server, one column per table entry, 'x' if that server holds
+ * the entry, blank otherwise.
+ *
+ * With @dots, each row is further extended to the right with a "shadow"
+ * of itself (same row, 'x' turned into '.') repeated enough times to
+ * reach the size of the next table, then trailing blanks are trimmed.
+ * This is what visualizes how the current table tiles into the next one
+ * as the cluster grows.
  */
-static void print_tbl(struct dtbl *d, int k)
+static void print_tbl(struct dtbl *d, int k, int dots)
 {
 	int sz = dtbl_size(d->r, k);
-	int s, i;
+	int sz_next = (dots && k < d->n) ? dtbl_size(d->r, k + 1) : sz;
+	int repeats = sz_next / sz - 1;
+	int len = sz * (repeats + 1);
+	char *line = malloc(len);
+	int s, i, rep, end;
 
 	for (s = 0; s < k; s++) {
 		for (i = 0; i < sz; i++)
-			putchar(d->tbl[k - 1][i] & (1 << s) ? 'x' : ' ');
+			line[i] = d->tbl[k - 1][i] & (1 << s) ? 'x' : ' ';
+
+		for (rep = 1; rep <= repeats; rep++)
+			for (i = 0; i < sz; i++)
+				line[rep * sz + i] = line[i] == 'x' ? '.' : ' ';
+
+		end = len;
+		while (end > 0 && line[end - 1] == ' ')
+			end--;
+
+		fwrite(line, 1, end, stdout);
 		putchar('\n');
 	}
+
+	free(line);
 }
 
 int main(int argc, char **argv)
 {
-	int r, n, k, ret;
+	int r, n, k, ret, dots = 0;
 	struct dtbl *d;
+	const char *prog = argv[0];
+
+	if (argc > 1 && !strcmp(argv[1], "--dots")) {
+		dots = 1;
+		argv++;
+		argc--;
+	}
 
 	if (argc != 3) {
-		fprintf(stderr, "usage: %s <replicas> <servers>\n", argv[0]);
+		fprintf(stderr, "usage: %s [--dots] <replicas> <servers>\n",
+			prog);
 		return -EINVAL;
 	}
 
@@ -248,7 +279,7 @@ int main(int argc, char **argv)
 	}
 
 	for (k = r; k <= n; k++) {
-		print_tbl(d, k);
+		print_tbl(d, k, dots);
 		putchar('\n');
 	}
 

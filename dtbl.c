@@ -83,6 +83,103 @@ void free_dtbl(struct dtbl *d)
 }
 
 /*
+ * Hand `need[s]` entries from each existing server s over to the new
+ * server, one sweep of the table at a time, spreading the picks across
+ * the table instead of taking one contiguous run. Returns 1 on success,
+ * 0 if the remaining `need[]` can never be satisfied.
+ */
+static int place_packed(int *tbl, int *need, char *done, int sz_new, int k,
+			 int new_bit)
+{
+	int i, s, left = 0;
+
+	for (s = 0; s < k - 1; s++)
+		left += need[s];
+
+	while (left) {
+		int progress = 0;
+
+		for (i = 0; i < sz_new; i++) {
+			if (done[i])
+				continue;
+
+			for (s = 0; s < k - 1; s++) {
+				if (!need[s] || !(tbl[i] & (1 << s)))
+					continue;
+
+				tbl[i] &= ~(1 << s);
+				tbl[i] |= new_bit;
+				done[i] = 1;
+				need[s]--;
+				left--;
+				progress = 1;
+				break;
+			}
+		}
+
+		/* a full sweep placed nothing - the remaining `need[]`
+		 * can never be satisfied, bail out instead of spinning
+		 * forever.
+		 */
+		if (!progress)
+			break;
+	}
+
+	return left == 0;
+}
+
+/*
+ * Same job as place_packed(), but instead of sweeping the table left to
+ * right and taking the first eligible entry, each of the D handovers is
+ * aimed at an evenly-spaced target position (d * sz_new / D) and only
+ * falls back to scanning forward from there when that slot is already
+ * taken. Preferring, among the servers still eligible at that slot, the
+ * one with the largest remaining need evens out how far through the
+ * table each server's handovers end up spread.
+ */
+static int place_spread(int *tbl, int *need, char *done, int sz_new, int k,
+			 int new_bit)
+{
+	int d, i, s, off, target, best, placed, D = 0;
+
+	for (s = 0; s < k - 1; s++)
+		D += need[s];
+
+	for (d = 0; d < D; d++) {
+		target = (int)((long long)d * sz_new / D);
+		placed = 0;
+
+		for (off = 0; off < sz_new && !placed; off++) {
+			i = (target + off) % sz_new;
+
+			if (done[i])
+				continue;
+
+			best = -1;
+			for (s = 0; s < k - 1; s++) {
+				if (need[s] && (tbl[i] & (1 << s)) &&
+				    (best < 0 || need[s] > need[best]))
+					best = s;
+			}
+
+			if (best < 0)
+				continue;
+
+			tbl[i] &= ~(1 << best);
+			tbl[i] |= new_bit;
+			done[i] = 1;
+			need[best]--;
+			placed = 1;
+		}
+
+		if (!placed)
+			return 0;
+	}
+
+	return 1;
+}
+
+/*
  * Generate distribution tables needed for r replicas
  * over r, r + 1, ..., n servers.
  *
@@ -104,8 +201,12 @@ void free_dtbl(struct dtbl *d)
  * that all k servers end up holding lcm[k - 1] / k entries each -
  * this quantity is always an integer because k and k - 1 are coprime
  * and both divide lcm[k - 1] individually.
+ *
+ * @spread selects how those handovers are placed within the table:
+ * packed (0) takes the first eligible entry on each sweep, spread (1)
+ * aims each handover at an evenly-spaced target position instead.
  */
-int gen_tbl(int r, int n, int **tbl)
+int gen_tbl(int r, int n, int **tbl, int spread)
 {
 	int i, k;
 
@@ -127,7 +228,7 @@ int gen_tbl(int r, int n, int **tbl)
 		int new_bit = 1 << (k - 1);
 		int *need;
 		char *done;
-		int s, left;
+		int s, ok;
 
 		need = malloc((k - 1) * sizeof(*need));
 		done = calloc(sz_new, sizeof(*done));
@@ -144,45 +245,14 @@ int gen_tbl(int r, int n, int **tbl)
 		for (i = 0; i < sz_new; i++)
 			tbl[idx][i] = tbl[prev][i % sz_old];
 
-		/* hand `move` entries from every existing server over to
-		 * the new one, spreading the picks across the table
-		 * instead of taking one contiguous run.
-		 */
-		left = (k - 1) * move;
-		while (left) {
-			int progress = 0;
-
-			for (i = 0; i < sz_new; i++) {
-				if (done[i])
-					continue;
-
-				for (s = 0; s < k - 1; s++) {
-					if (!need[s] ||
-					    !(tbl[idx][i] & (1 << s)))
-						continue;
-
-					tbl[idx][i] &= ~(1 << s);
-					tbl[idx][i] |= new_bit;
-					done[i] = 1;
-					need[s]--;
-					left--;
-					progress = 1;
-					break;
-				}
-			}
-
-			/* a full sweep placed nothing - the remaining
-			 * `need[]` can never be satisfied, bail out
-			 * instead of spinning forever.
-			 */
-			if (!progress)
-				break;
-		}
+		ok = spread ?
+			place_spread(tbl[idx], need, done, sz_new, k, new_bit) :
+			place_packed(tbl[idx], need, done, sz_new, k, new_bit);
 
 		free(need);
 		free(done);
 
-		if (left)
+		if (!ok)
 			return -EINVAL;
 	}
 
@@ -246,18 +316,25 @@ static void print_tbl(struct dtbl *d, int k, int dots)
 
 int main(int argc, char **argv)
 {
-	int r, n, k, ret, dots = 0;
+	int r, n, k, ret, dots = 0, spread = 0;
 	struct dtbl *d;
 	const char *prog = argv[0];
 
-	if (argc > 1 && !strcmp(argv[1], "--dots")) {
-		dots = 1;
+	while (argc > 1 && argv[1][0] == '-') {
+		if (!strcmp(argv[1], "--dots"))
+			dots = 1;
+		else if (!strcmp(argv[1], "--spread"))
+			spread = 1;
+		else
+			break;
+
 		argv++;
 		argc--;
 	}
 
 	if (argc != 3) {
-		fprintf(stderr, "usage: %s [--dots] <replicas> <servers>\n",
+		fprintf(stderr,
+			"usage: %s [--dots] [--spread] <replicas> <servers>\n",
 			prog);
 		return -EINVAL;
 	}
@@ -271,7 +348,7 @@ int main(int argc, char **argv)
 		return -ENOMEM;
 	}
 
-	ret = gen_tbl(r, n, d->tbl);
+	ret = gen_tbl(r, n, d->tbl, spread);
 	if (ret) {
 		fprintf(stderr, "gen_tbl(%d, %d) failed: %d\n", r, n, ret);
 		free_dtbl(d);

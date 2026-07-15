@@ -26,7 +26,7 @@ static int check(int r, int n)
 		return 1;
 	}
 
-	ret = gen_tbl(r, n, d->tbl);
+	ret = gen_tbl(r, n, d->tbl, 0);
 	if (ret) {
 		printf("r=%d n=%d: gen_tbl failed: %d\n", r, n, ret);
 		free_dtbl(d);

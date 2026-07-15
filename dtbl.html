@@ -46,8 +46,28 @@
     opacity: 1;
     transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, border-color 0.15s ease, margin 0.15s ease;
   }
+  .dots-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 34px;
+    padding: 0 8px;
+    max-width: 60px;
+    opacity: 1;
+    color: #777;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+    transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, margin 0.15s ease;
+  }
+  .dots-label:hover {
+    color: #e6e8ec;
+  }
   .controls:not(:focus-within):not(:hover) select,
-  .controls:not(:focus-within):not(:hover) #share {
+  .controls:not(:focus-within):not(:hover) #share,
+  .controls:not(:focus-within):not(:hover) .dots-label {
     max-width: 0;
     opacity: 0;
     padding: 6px 0;
@@ -85,6 +105,9 @@
     <option value="packed">..</option>
     <option value="spread">. .</option>
   </select>
+  <label class="dots-label" for="dots" title="extend rows with dots like dtbl.md">
+    <input type="checkbox" id="dots"> dots
+  </label>
   <button id="generate">dtbl</button>
   <button id="share" title="copy shareable link">share</button>
 </div>
@@ -274,12 +297,13 @@ function displayResult(data) {
   const outEl = document.getElementById('output');
   const r = parseInt(document.getElementById('r').value, 10);
   const n = parseInt(document.getElementById('n').value, 10);
+  const dots = document.getElementById('dots').checked;
 
   if (data.success) {
     const tbl = data.tbl;
     let blocks = [];
     for (let k = r; k <= n; k++) {
-      blocks.push(printTbl(tbl, r, k, n));
+      blocks.push(printTbl(tbl, r, k, n, dots));
     }
     outEl.textContent = blocks.join('\n\n');
   } else {
@@ -289,9 +313,9 @@ function displayResult(data) {
   document.getElementById('generate').textContent = 'dtbl';
 }
 
-function printTbl(tbl, r, k, n) {
+function printTbl(tbl, r, k, n, dots) {
   const sz = dtblSize(r, k);
-  const szNext = (k < n) ? dtblSize(r, k + 1) : sz;
+  const szNext = (dots && k < n) ? dtblSize(r, k + 1) : sz;
   const repeats = Math.floor(szNext / sz) - 1;
 
   let lines = [];
@@ -355,12 +379,14 @@ function updateURL() {
   const r = document.getElementById('r').value;
   const n = document.getElementById('n').value;
   const mode = document.getElementById('mode').value;
-  
+  const dots = document.getElementById('dots').checked;
+
   const params = new URLSearchParams();
   params.set('r', r);
   params.set('n', n);
   if (mode === 'spread') params.set('mode', mode);
-  
+  if (dots) params.set('dots', '1');
+
   const newURL = `${window.location.pathname}?${params.toString()}`;
   history.replaceState(null, '', newURL);
 }
@@ -370,10 +396,12 @@ function loadFromURL() {
   const rParam = params.get('r');
   const nParam = params.get('n');
   const modeParam = params.get('mode');
-  
+  const dotsParam = params.get('dots');
+
   if (rParam) document.getElementById('r').value = parseInt(rParam, 10);
   if (nParam) document.getElementById('n').value = parseInt(nParam, 10);
   if (modeParam) document.getElementById('mode').value = modeParam;
+  document.getElementById('dots').checked = (dotsParam === '1');
 }
 
 function initValues() {
@@ -428,7 +456,7 @@ async function shareLink() {
 document.getElementById('generate').addEventListener('click', generate);
 document.getElementById('share').addEventListener('click', shareLink);
 
-['r', 'n', 'mode'].forEach(id => {
+['r', 'n', 'mode', 'dots'].forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('change', updateURL);
   el.addEventListener('input', updateURL);

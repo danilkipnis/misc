@@ -10,6 +10,16 @@
  * Least common multiplier of the sequence {1, 2, 3, ... , MAX_SERVERS}.
  * Size of an array needed for number of replicas r and number of servers n
  * is given by lcm(n)/r. I.e. for raid0, r=1.
+ *
+ * lcm(n) only grows from lcm(n - 1) when n itself is a prime power p^e,
+ * since that is the only time n contributes a factor not already covered
+ * by some earlier multiple of p. Otherwise lcm(n) == lcm(n - 1) (e.g.
+ * lcm(6) == lcm(5) == 60, since 6 = 2 * 3 and both primes already appear
+ * in lcm(5) at a sufficient power). So dtbl_size(r, r) == lcm(r)/r is
+ * *not* monotonic in r: at any r where r + 1 is not a prime power, the
+ * denominator grows while the numerator stays flat, so dtbl_size(r, r)
+ * can end up bigger than dtbl_size(r + 1, r + 1) - e.g. lcm(5)/5 = 12 >
+ * lcm(6)/6 = 10.
  */
 static int lcm[] = {1, 2, 6, 12, 60, 60, 420, 840, 2520, 2520, 27720, 27720,
 		    360360, 360360, 360360, 720720, 12252240, 12252240,

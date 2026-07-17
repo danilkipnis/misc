@@ -15,20 +15,21 @@ static int popcount(int x)
 	return c;
 }
 
-static int check(int r, int n)
+static int check(int r, int n, int spread)
 {
 	struct dtbl *d;
 	int k, i, s, ret, fail = 0;
 
 	d = alloc_dtbl(r, n);
 	if (!d) {
-		printf("r=%d n=%d: alloc failed\n", r, n);
+		printf("r=%d n=%d spread=%d: alloc failed\n", r, n, spread);
 		return 1;
 	}
 
-	ret = gen_tbl(r, n, d->tbl, 0);
+	ret = gen_tbl(r, n, d->tbl, spread);
 	if (ret) {
-		printf("r=%d n=%d: gen_tbl failed: %d\n", r, n, ret);
+		printf("r=%d n=%d spread=%d: gen_tbl failed: %d\n",
+		       r, n, spread, ret);
 		free_dtbl(d);
 		return 1;
 	}
@@ -40,8 +41,8 @@ static int check(int r, int n)
 
 		for (i = 0; i < sz; i++) {
 			if (popcount(d->tbl[idx][i]) != r) {
-				printf("r=%d n=%d k=%d entry %d has %d bits, want %d\n",
-				       r, n, k, i, popcount(d->tbl[idx][i]), r);
+				printf("r=%d n=%d spread=%d k=%d entry %d has %d bits, want %d\n",
+				       r, n, spread, k, i, popcount(d->tbl[idx][i]), r);
 				fail = 1;
 			}
 			for (s = 0; s < k; s++)
@@ -53,8 +54,8 @@ static int check(int r, int n)
 			int target = sz * r / k;
 
 			if (cnt[s] != target) {
-				printf("r=%d n=%d k=%d server %d holds %d, want %d\n",
-				       r, n, k, s, cnt[s], target);
+				printf("r=%d n=%d spread=%d k=%d server %d holds %d, want %d\n",
+				       r, n, spread, k, s, cnt[s], target);
 				fail = 1;
 			}
 		}
@@ -81,12 +82,12 @@ static int check(int r, int n)
 			}
 
 			if (moved_between_old) {
-				printf("r=%d n=%d k=%d: %d entries moved between old servers (should be 0)\n",
-				       r, n, k, moved_between_old);
+				printf("r=%d n=%d spread=%d k=%d: %d entries moved between old servers (should be 0)\n",
+				       r, n, spread, k, moved_between_old);
 				fail = 1;
 			}
-			printf("r=%d n=%d k=%d: %d/%d entries touched (%.1f%%, ideal ~%.1f%%)\n",
-			       r, n, k, moved, sz, 100.0 * moved / sz, 100.0 / k);
+			printf("r=%d n=%d spread=%d k=%d: %d/%d entries touched (%.1f%%, ideal ~%.1f%%)\n",
+			       r, n, spread, k, moved, sz, 100.0 * moved / sz, 100.0 / k);
 		}
 
 		free(cnt);
@@ -98,12 +99,14 @@ static int check(int r, int n)
 
 int main(void)
 {
-	int fail = 0;
+	int fail = 0, spread;
 
-	fail |= check(1, 8);
-	fail |= check(2, 8);
-	fail |= check(3, 9);
-	fail |= check(4, 10);
+	for (spread = 0; spread <= 1; spread++) {
+		fail |= check(1, 8, spread);
+		fail |= check(2, 8, spread);
+		fail |= check(3, 9, spread);
+		fail |= check(4, 10, spread);
+	}
 
 	printf(fail ? "FAIL\n" : "OK\n");
 	return fail;

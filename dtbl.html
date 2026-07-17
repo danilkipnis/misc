@@ -323,7 +323,10 @@ function printTbl(tbl, r, k, n, dots) {
       raw += (tbl[k - 1][i] & (1 << s)) ? 'x' : ' ';
     }
     const shadow = raw.replace(/x/g, '.');
-    lines.push((raw + shadow.repeat(repeats)).replace(/\s+$/, ''));
+    const full = raw + shadow.repeat(repeats);
+    let end = full.length;
+    while (end > 0 && full[end - 1] === ' ') end--;
+    lines.push(full.slice(0, end));
   }
   return lines.join('\n');
 }

@@ -19,6 +19,12 @@
     flex-wrap: wrap;
     gap: 0.5em;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    opacity: 1;
+    transition: opacity 0.6s ease;
+  }
+  .controls.idle-hidden {
+    opacity: 0;
+    pointer-events: none;
   }
   input[type=number], select, button {
     box-sizing: border-box;
@@ -587,6 +593,8 @@ function canGrowN(r, n) {
 function onIdle() {
   if (document.visibilityState !== 'visible' || !idleLoopEnabled) return;
 
+  document.querySelector('.controls').classList.add('idle-hidden');
+
   const rEl = document.getElementById('r');
   const nEl = document.getElementById('n');
   const r = parseInt(rEl.value, 10);
@@ -617,6 +625,7 @@ function onIdle() {
 
 function onActivity() {
   resetZoom();
+  document.querySelector('.controls').classList.remove('idle-hidden');
   clearTimeout(idleTimer);
   if (idleLoopEnabled) {
     idleTimer = setTimeout(onIdle, IDLE_MS_FIRST);
@@ -641,6 +650,7 @@ document.getElementById('loop').addEventListener('change', e => {
   } else {
     clearTimeout(idleTimer);
     resetZoom();
+    document.querySelector('.controls').classList.remove('idle-hidden');
   }
 });
 

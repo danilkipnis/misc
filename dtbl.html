@@ -508,12 +508,19 @@ let idleLoopEnabled = true;
 // Slow diagonal drift while idle, biased up more than left. Runs as
 // its own rAF loop independent of the zoom/onIdle cadence so it stays
 // smooth and continuous across idle cycles; real activity snaps it back.
-const DRIFT_VX = -1.5; // px/sec
-const DRIFT_VY = -6;   // px/sec
+const DRIFT_VX = -1.5;  // px/sec
+const DRIFT_VY = -6;    // px/sec
+const DRIFT_ROTATE_DEG_PER_SEC = 0.3;
 let driftAnimFrame = null;
 let driftX = 0;
 let driftY = 0;
+let driftRotate = 0;
 let driftLastTs = null;
+
+function applyDriftTransform() {
+  document.body.style.transform =
+    `translate(${driftX}px, ${driftY}px) rotate(${driftRotate}deg)`;
+}
 
 function driftStep(ts) {
   if (driftLastTs === null) driftLastTs = ts;
@@ -521,7 +528,8 @@ function driftStep(ts) {
   driftLastTs = ts;
   driftX += DRIFT_VX * dt;
   driftY += DRIFT_VY * dt;
-  document.body.style.transform = `translate(${driftX}px, ${driftY}px)`;
+  driftRotate += DRIFT_ROTATE_DEG_PER_SEC * dt;
+  applyDriftTransform();
   driftAnimFrame = requestAnimationFrame(driftStep);
 }
 
@@ -539,6 +547,7 @@ function stopDrift() {
   }
   driftX = 0;
   driftY = 0;
+  driftRotate = 0;
   document.body.style.transform = '';
 }
 
@@ -660,6 +669,7 @@ function onIdle() {
     zoomInPending = true;
     driftX = 0;
     driftY = 0;
+    driftRotate = 0;
     document.body.style.transform = '';
   }
 

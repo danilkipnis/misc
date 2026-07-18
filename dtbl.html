@@ -19,12 +19,6 @@
     flex-wrap: wrap;
     gap: 0.5em;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    opacity: 1;
-    transition: opacity 0.6s ease;
-  }
-  .controls.idle-hidden {
-    opacity: 0;
-    pointer-events: none;
   }
   input[type=number], select, button {
     box-sizing: border-box;
@@ -271,8 +265,7 @@ try {
   // If the worker dies mid-request (e.g. crashes on a huge table), fall
   // back to computing the in-flight request on the main thread instead of
   // leaving displayResult() uncalled — otherwise the UI hangs on
-  // "Calculating..." forever and the idle loop (which waits on
-  // displayResult -> doZoomEffect) never continues.
+  // "Calculating..." forever.
   worker.onerror = function() {
     workerActive = false;
     if (pendingRequest) {
@@ -308,11 +301,6 @@ function displayResult(data) {
     outEl.textContent = '';
   }
   document.getElementById('generate').textContent = 'dtbl';
-
-  if (pendingZoomEffect) {
-    pendingZoomEffect = false;
-    requestAnimationFrame(() => requestAnimationFrame(doZoomEffect));
-  }
 }
 
 function printTbl(tbl, r, k, n) {
@@ -335,18 +323,6 @@ function printTbl(tbl, r, k, n) {
   return lines.join('\n');
 }
 
-// generate() can bail out before ever calling displayResult() (bad input,
-// memory-budget guard). If that happens mid idle-cycle, pendingZoomEffect
-// would stay stuck true and the self-rescheduling loop in doZoomEffect
-// would never run again — so abort the cycle explicitly here instead.
-function abortIdleCycle() {
-  if (pendingZoomEffect) {
-    pendingZoomEffect = false;
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(onIdle, IDLE_MS);
-  }
-}
-
 function generate() {
   const errorEl = document.getElementById('error');
   const outEl = document.getElementById('output');
@@ -358,12 +334,10 @@ function generate() {
 
   if (!Number.isInteger(r) || !Number.isInteger(n)) {
     errorEl.textContent = 'r and n must be integers.';
-    abortIdleCycle();
     return;
   }
   if (r < 1 || n < r || n > MAX_SERVERS) {
     errorEl.textContent = `alloc_dtbl(${r}, ${n}) failed: r must be >=1, n >= r, n <= ${MAX_SERVERS}`;
-    abortIdleCycle();
     return;
   }
 
@@ -374,7 +348,6 @@ function generate() {
     const estMB = (estimatedBytes / (1024 * 1024)).toFixed(1);
     const capMB = (MEMORY_BUDGET_BYTES / (1024 * 1024)).toFixed(0);
     errorEl.textContent = `Memory limit exceeded! Estimated ~${estMB} MB, budget is ${capMB} MB.\nTry a smaller server limit (n) or a larger replica factor (r).`;
-    abortIdleCycle();
     return;
   }
 
@@ -459,166 +432,9 @@ document.getElementById('generate').addEventListener('click', generate);
   });
 });
 
-/*
- * Idle screensaver: if the tab sits untouched for a couple of seconds,
- * grow n (same r) each cycle, regenerate, then zoom the whole page out
- * a bit further so every table block fits vertically in the viewport.
- * Once n can't grow any more, roll a fresh random r/n and zoom back in.
- * Otherwise the zoom only ever decreases while idle; real user activity
- * always resets it instantly (see resetZoom()).
- */
-const IDLE_MS = 4000;
-const IDLE_MS_FIRST = 10000;
-const ZOOM_OUT_MS = 3200;
-const ZOOM_IN_MS = 2400;
-const MAX_N_PAUSE_MS = 3000;
-let idleTimer = null;
-let pendingZoomEffect = false;
-let zoomAnimFrame = null;
-let nextIdlePause = 0;
-let zoomInPending = false;
-
-// Neither CSS `zoom` (doesn't render on Chrome for Android) nor
-// `transform: scale()` (never reflows, so content already clipped by a
-// <pre>'s overflow-x:auto stays clipped forever) work everywhere. Real
-// browser zoom shrinks the effective font size and reflows around it,
-// which is exactly what reveals a table's previously-scrolled-off
-// columns. We replicate that directly: scale the root font-size (the
-// control sizing above is expressed in em/rem/ch specifically so it
-// rides along), which reflows on every engine, mobile included.
-const BASE_ROOT_FONT_SIZE = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-
-function resetZoom() {
-  if (zoomAnimFrame !== null) {
-    cancelAnimationFrame(zoomAnimFrame);
-    zoomAnimFrame = null;
-  }
-  document.documentElement.style.fontSize = '';
-}
-
-// onComplete only fires when the animation runs to completion; if
-// resetZoom() cancels it partway (real user activity), the chain — and
-// with it the next scheduled onIdle — simply stops, instead of firing
-// alongside a fresh interaction.
-function animateZoom(from, to, duration, onComplete) {
-  let startTime = null;
-  function step(now) {
-    if (startTime === null) startTime = now;
-    const t = Math.min(1, (now - startTime) / duration);
-    const eased = 1 - Math.pow(1 - t, 3);
-    const scale = from + (to - from) * eased;
-    document.documentElement.style.fontSize = `${BASE_ROOT_FONT_SIZE * scale}px`;
-    if (t < 1) {
-      zoomAnimFrame = requestAnimationFrame(step);
-    } else {
-      zoomAnimFrame = null;
-      if (onComplete) onComplete();
-    }
-  }
-  zoomAnimFrame = requestAnimationFrame(step);
-}
-
-function currentZoom() {
-  const size = parseFloat(getComputedStyle(document.documentElement).fontSize);
-  return (Number.isFinite(size) && size > 0) ? size / BASE_ROOT_FONT_SIZE : 1;
-}
-
-// Only reached once the current zoom animation runs to completion
-// (resetZoom() cancels it instead if real activity interrupts it).
-function scheduleNextIdle() {
-  idleTimer = setTimeout(onIdle, IDLE_MS + nextIdlePause);
-  nextIdlePause = 0;
-}
-
-function doZoomEffect() {
-  const zoomNow = currentZoom();
-
-  if (zoomInPending) {
-    zoomInPending = false;
-    animateZoom(zoomNow, 1, ZOOM_IN_MS, scheduleNextIdle);
-    return;
-  }
-
-  // Font-size scaling genuinely reflows the page, so scrollHeight at
-  // the current (already shrunk) scale must be scaled back up to infer
-  // the fully-zoomed-in (natural) height instead of remeasuring at
-  // scale 1 — resetting the font-size just to measure would itself
-  // look like a zoom-in every cycle.
-  const naturalHeight = document.body.scrollHeight / zoomNow;
-  // visualViewport reports, in the same CSS-pixel space as scrollHeight,
-  // how much content is actually visible right now. window.innerHeight
-  // is the full layout viewport and can be far larger — e.g. under a
-  // browser-level page zoom or pinch-zoom — which made this always
-  // conclude "it already fits" and never shrink further.
-  const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-  const zoomOut = Math.max(0.1, Math.min(zoomNow, (viewportHeight / naturalHeight) * 0.98));
-
-  animateZoom(zoomNow, zoomOut, ZOOM_OUT_MS, scheduleNextIdle);
-}
-
-// Whether n can still grow by one more without blowing the memory budget
-// (or running past the table's own server-count ceiling).
-const MAX_N = 12;
-
-function canGrowN(r, n) {
-  return n <= MAX_N && estimateBytes(r, n) <= MEMORY_BUDGET_BYTES;
-}
-
-function onIdle() {
-  if (document.visibilityState !== 'visible') return;
-
-  document.querySelector('.controls').classList.add('idle-hidden');
-
-  const rEl = document.getElementById('r');
-  const nEl = document.getElementById('n');
-  const r = parseInt(rEl.value, 10);
-  const n = parseInt(nEl.value, 10);
-
-  if (Number.isInteger(n) && canGrowN(r, n + 1)) {
-    nEl.value = n + 1;
-    // Linger a bit once n hits its max before rolling a fresh r/n.
-    nextIdlePause = canGrowN(r, n + 2) ? 0 : MAX_N_PAUSE_MS;
-    zoomInPending = false;
-  } else {
-    const r0 = 1 + Math.floor(Math.random() * 5);
-    const n0 = r0 + Math.floor(Math.random() * 4);
-    rEl.value = r0;
-    nEl.value = n0;
-    const modeEl = document.getElementById('mode');
-    modeEl.value = modeEl.value === 'spread' ? 'packed' : 'spread';
-    nextIdlePause = 0;
-    // A fresh r was just rolled — zoom back in instead of further out.
-    zoomInPending = true;
-  }
-
-  updateURL();
-
-  pendingZoomEffect = true;
-  generate();
-}
-
-function onActivity() {
-  resetZoom();
-  document.querySelector('.controls').classList.remove('idle-hidden');
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(onIdle, IDLE_MS_FIRST);
-}
-
-['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach(evt =>
-  document.addEventListener(evt, onActivity, { passive: true }));
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    onActivity();
-  } else {
-    clearTimeout(idleTimer);
-  }
-});
-
 initValues();
 updateURL();
 generate();  // initial generation
-onActivity(); // start the idle timer
 </script>
 </body>
 </html>

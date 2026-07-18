@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dtbl</title>
 <style>
-  html {
-    background: #000;
-  }
   body {
     background: #000;
     color: #e6e8ec;
@@ -481,43 +478,6 @@ let zoomAnimFrame = null;
 let nextIdlePause = 0;
 let zoomInPending = false;
 
-// Slow diagonal drift while idle, biased up more than left. Runs as
-// its own rAF loop independent of the zoom/onIdle cadence so it stays
-// smooth and continuous across idle cycles; real activity snaps it back.
-const DRIFT_VX = -1.5; // px/sec
-const DRIFT_VY = -6;   // px/sec
-let driftAnimFrame = null;
-let driftX = 0;
-let driftY = 0;
-let driftLastTs = null;
-
-function driftStep(ts) {
-  if (driftLastTs === null) driftLastTs = ts;
-  const dt = (ts - driftLastTs) / 1000;
-  driftLastTs = ts;
-  driftX += DRIFT_VX * dt;
-  driftY += DRIFT_VY * dt;
-  document.body.style.transform = `translate(${driftX}px, ${driftY}px)`;
-  driftAnimFrame = requestAnimationFrame(driftStep);
-}
-
-function startDrift() {
-  if (driftAnimFrame === null) {
-    driftLastTs = null;
-    driftAnimFrame = requestAnimationFrame(driftStep);
-  }
-}
-
-function stopDrift() {
-  if (driftAnimFrame !== null) {
-    cancelAnimationFrame(driftAnimFrame);
-    driftAnimFrame = null;
-  }
-  driftX = 0;
-  driftY = 0;
-  document.body.style.transform = '';
-}
-
 // Neither CSS `zoom` (doesn't render on Chrome for Android) nor
 // `transform: scale()` (never reflows, so content already clipped by a
 // <pre>'s overflow-x:auto stays clipped forever) work everywhere. Real
@@ -534,7 +494,6 @@ function resetZoom() {
     zoomAnimFrame = null;
   }
   document.documentElement.style.fontSize = '';
-  stopDrift();
 }
 
 // onComplete only fires when the animation runs to completion; if
@@ -609,7 +568,6 @@ function onIdle() {
   if (document.visibilityState !== 'visible') return;
 
   document.querySelector('.controls').classList.add('idle-hidden');
-  startDrift();
 
   const rEl = document.getElementById('r');
   const nEl = document.getElementById('n');
@@ -629,12 +587,8 @@ function onIdle() {
     const modeEl = document.getElementById('mode');
     modeEl.value = modeEl.value === 'spread' ? 'packed' : 'spread';
     nextIdlePause = 0;
-    // A fresh r was just rolled — zoom back in instead of further out,
-    // and snap the drift back to its starting position too.
+    // A fresh r was just rolled — zoom back in instead of further out.
     zoomInPending = true;
-    driftX = 0;
-    driftY = 0;
-    document.body.style.transform = '';
   }
 
   updateURL();

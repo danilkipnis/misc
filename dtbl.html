@@ -505,11 +505,11 @@ let nextIdlePause = 0;
 let zoomInPending = false;
 let idleLoopEnabled = true;
 
-// Slow diagonal drift while idle, biased left more than up. Runs as
+// Slow diagonal drift while idle, biased up more than left. Runs as
 // its own rAF loop independent of the zoom/onIdle cadence so it stays
 // smooth and continuous across idle cycles; real activity snaps it back.
-const DRIFT_VX = -3;   // px/sec
-const DRIFT_VY = -1.5; // px/sec
+const DRIFT_VX = -1.5; // px/sec
+const DRIFT_VY = -6;   // px/sec
 let driftAnimFrame = null;
 let driftX = 0;
 let driftY = 0;

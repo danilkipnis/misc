@@ -577,7 +577,7 @@ function doZoomEffect() {
 
 // Whether n can still grow by one more without blowing the memory budget
 // (or running past the table's own server-count ceiling).
-const MAX_N = 10;
+const MAX_N = 12;
 
 function canGrowN(r, n) {
   return n <= MAX_N && estimateBytes(r, n) <= MEMORY_BUDGET_BYTES;

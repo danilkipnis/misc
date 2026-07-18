@@ -485,6 +485,7 @@ document.getElementById('generate').addEventListener('click', generate);
  * always resets it instantly (see resetZoom()).
  */
 const IDLE_MS = 5000;
+const IDLE_MS_FIRST = 10000;
 const ZOOM_OUT_MS = 3200;
 const ZOOM_IN_MS = 2400;
 const MAX_N_PAUSE_MS = 3000;
@@ -618,7 +619,7 @@ function onActivity() {
   resetZoom();
   clearTimeout(idleTimer);
   if (idleLoopEnabled) {
-    idleTimer = setTimeout(onIdle, IDLE_MS);
+    idleTimer = setTimeout(onIdle, IDLE_MS_FIRST);
   }
 }
 

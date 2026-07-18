@@ -46,7 +46,7 @@
     opacity: 1;
     transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, border-color 0.15s ease, margin 0.15s ease;
   }
-  .dots-label {
+  .loop-label {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -62,11 +62,11 @@
     cursor: pointer;
     transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, margin 0.15s ease;
   }
-  .dots-label:hover {
+  .loop-label:hover {
     color: #e6e8ec;
   }
   .controls:not(:focus-within):not(:hover) select,
-  .controls:not(:focus-within):not(:hover) .dots-label {
+  .controls:not(:focus-within):not(:hover) .loop-label {
     max-width: 0;
     opacity: 0;
     padding: 6px 0;
@@ -104,8 +104,8 @@
     <option value="packed">..</option>
     <option value="spread">. .</option>
   </select>
-  <label class="dots-label" for="dots" title="extend rows with dots like dtbl.md">
-    <input type="checkbox" id="dots" checked> dots
+  <label class="loop-label" for="loop" title="auto-regenerate while idle">
+    <input type="checkbox" id="loop" checked> loop
   </label>
   <button id="generate">dtbl</button>
 </div>
@@ -266,25 +266,42 @@ self.onmessage = function(e) {
 
 let worker = null;
 let workerActive = false;
+let pendingRequest = null;
 
 try {
   const blob = new Blob([workerCode], { type: 'application/javascript' });
   const workerUrl = URL.createObjectURL(blob);
   worker = new Worker(workerUrl);
   URL.revokeObjectURL(workerUrl);
-  
+
   worker.postMessage({ ping: true });
-  
+
   worker.onmessage = function(e) {
     if (e.data.pong) {
       workerActive = true;
     } else {
+      pendingRequest = null;
       displayResult(e.data);
     }
   };
-  
+
+  // If the worker dies mid-request (e.g. crashes on a huge table), fall
+  // back to computing the in-flight request on the main thread instead of
+  // leaving displayResult() uncalled — otherwise the UI hangs on
+  // "Calculating..." forever and the idle loop (which waits on
+  // displayResult -> doZoomEffect) never continues.
   worker.onerror = function() {
     workerActive = false;
+    if (pendingRequest) {
+      const { r, n, mode } = pendingRequest;
+      pendingRequest = null;
+      try {
+        const tbl = genTbl(r, n, mode);
+        displayResult({ success: true, tbl });
+      } catch (e) {
+        displayResult({ success: false, error: e.message });
+      }
+    }
   };
 } catch (e) {
   workerActive = false;
@@ -295,13 +312,12 @@ function displayResult(data) {
   const outEl = document.getElementById('output');
   const r = parseInt(document.getElementById('r').value, 10);
   const n = parseInt(document.getElementById('n').value, 10);
-  const dots = document.getElementById('dots').checked;
 
   if (data.success) {
     const tbl = data.tbl;
     let blocks = [];
     for (let k = r; k <= n; k++) {
-      blocks.push(printTbl(tbl, r, k, n, dots));
+      blocks.push(printTbl(tbl, r, k, n));
     }
     outEl.textContent = blocks.join('\n\n');
   } else {
@@ -309,11 +325,16 @@ function displayResult(data) {
     outEl.textContent = '';
   }
   document.getElementById('generate').textContent = 'dtbl';
+
+  if (pendingZoomEffect) {
+    pendingZoomEffect = false;
+    requestAnimationFrame(() => requestAnimationFrame(doZoomEffect));
+  }
 }
 
-function printTbl(tbl, r, k, n, dots) {
+function printTbl(tbl, r, k, n) {
   const sz = dtblSize(r, k);
-  const szNext = (dots && k < n) ? dtblSize(r, k + 1) : sz;
+  const szNext = (k < n) ? dtblSize(r, k + 1) : sz;
   const repeats = Math.floor(szNext / sz) - 1;
 
   let lines = [];
@@ -331,6 +352,18 @@ function printTbl(tbl, r, k, n, dots) {
   return lines.join('\n');
 }
 
+// generate() can bail out before ever calling displayResult() (bad input,
+// memory-budget guard). If that happens mid idle-cycle, pendingZoomEffect
+// would stay stuck true and the self-rescheduling loop in doZoomEffect
+// would never run again — so abort the cycle explicitly here instead.
+function abortIdleCycle() {
+  if (pendingZoomEffect) {
+    pendingZoomEffect = false;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(onIdle, IDLE_MS);
+  }
+}
+
 function generate() {
   const errorEl = document.getElementById('error');
   const outEl = document.getElementById('output');
@@ -342,10 +375,12 @@ function generate() {
 
   if (!Number.isInteger(r) || !Number.isInteger(n)) {
     errorEl.textContent = 'r and n must be integers.';
+    abortIdleCycle();
     return;
   }
   if (r < 1 || n < r || n > MAX_SERVERS) {
     errorEl.textContent = `alloc_dtbl(${r}, ${n}) failed: r must be >=1, n >= r, n <= ${MAX_SERVERS}`;
+    abortIdleCycle();
     return;
   }
 
@@ -356,6 +391,7 @@ function generate() {
     const estMB = (estimatedBytes / (1024 * 1024)).toFixed(1);
     const capMB = (MEMORY_BUDGET_BYTES / (1024 * 1024)).toFixed(0);
     errorEl.textContent = `Memory limit exceeded! Estimated ~${estMB} MB, budget is ${capMB} MB.\nTry a smaller server limit (n) or a larger replica factor (r).`;
+    abortIdleCycle();
     return;
   }
 
@@ -363,6 +399,7 @@ function generate() {
   outEl.textContent = '';
 
   if (worker && workerActive) {
+    pendingRequest = { r, n, mode };
     worker.postMessage({ r, n, mode });
   } else {
     setTimeout(() => {
@@ -380,13 +417,11 @@ function updateURL() {
   const r = document.getElementById('r').value;
   const n = document.getElementById('n').value;
   const mode = document.getElementById('mode').value;
-  const dots = document.getElementById('dots').checked;
 
   const params = new URLSearchParams();
   params.set('r', r);
   params.set('n', n);
   if (mode === 'spread') params.set('mode', mode);
-  if (dots) params.set('dots', '1');
 
   const newURL = `${window.location.pathname}?${params.toString()}`;
   history.replaceState(null, '', newURL);
@@ -397,12 +432,10 @@ function loadFromURL() {
   const rParam = params.get('r');
   const nParam = params.get('n');
   const modeParam = params.get('mode');
-  const dotsParam = params.get('dots');
 
   if (rParam) document.getElementById('r').value = parseInt(rParam, 10);
   if (nParam) document.getElementById('n').value = parseInt(nParam, 10);
   if (modeParam) document.getElementById('mode').value = modeParam;
-  document.getElementById('dots').checked = (dotsParam === '1');
 }
 
 function initValues() {
@@ -431,7 +464,7 @@ function initValues() {
 // Setup listeners (Enter key + URL updates)
 document.getElementById('generate').addEventListener('click', generate);
 
-['r', 'n', 'mode', 'dots'].forEach(id => {
+['r', 'n', 'mode'].forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('change', updateURL);
   el.addEventListener('input', updateURL);
@@ -443,9 +476,157 @@ document.getElementById('generate').addEventListener('click', generate);
   });
 });
 
+/*
+ * Idle screensaver: if the tab sits untouched for a couple of seconds,
+ * grow n (same r) each cycle, regenerate, then zoom the whole page out
+ * a bit further so every table block fits vertically in the viewport.
+ * Once n can't grow any more, roll a fresh random r/n and zoom back in.
+ * Otherwise the zoom only ever decreases while idle; real user activity
+ * always resets it instantly (see resetZoom()).
+ */
+const IDLE_MS = 2400;
+const ZOOM_OUT_MS = 3200;
+const ZOOM_IN_MS = 2400;
+const MAX_N_PAUSE_MS = 3000;
+let idleTimer = null;
+let pendingZoomEffect = false;
+let zoomAnimFrame = null;
+let nextIdlePause = 0;
+let zoomInPending = false;
+let idleLoopEnabled = true;
+
+function resetZoom() {
+  if (zoomAnimFrame !== null) {
+    cancelAnimationFrame(zoomAnimFrame);
+    zoomAnimFrame = null;
+  }
+  document.body.style.zoom = '';
+}
+
+// onComplete only fires when the animation runs to completion; if
+// resetZoom() cancels it partway (real user activity), the chain — and
+// with it the next scheduled onIdle — simply stops, instead of firing
+// alongside a fresh interaction.
+function animateZoom(from, to, duration, onComplete) {
+  let startTime = null;
+  function step(now) {
+    if (startTime === null) startTime = now;
+    const t = Math.min(1, (now - startTime) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    document.body.style.zoom = from + (to - from) * eased;
+    if (t < 1) {
+      zoomAnimFrame = requestAnimationFrame(step);
+    } else {
+      zoomAnimFrame = null;
+      if (onComplete) onComplete();
+    }
+  }
+  zoomAnimFrame = requestAnimationFrame(step);
+}
+
+function currentZoom() {
+  const z = parseFloat(document.body.style.zoom);
+  return (Number.isFinite(z) && z > 0) ? z : 1;
+}
+
+// Only reached once the current zoom animation runs to completion
+// (resetZoom() cancels it instead if real activity interrupts it).
+function scheduleNextIdle() {
+  if (idleLoopEnabled) {
+    idleTimer = setTimeout(onIdle, IDLE_MS + nextIdlePause);
+  }
+  nextIdlePause = 0;
+}
+
+function doZoomEffect() {
+  const zoomNow = currentZoom();
+
+  if (zoomInPending) {
+    zoomInPending = false;
+    animateZoom(zoomNow, 1, ZOOM_IN_MS, scheduleNextIdle);
+    return;
+  }
+
+  // Infer the fully-zoomed-in (natural) content height from what's
+  // currently measured, instead of snapping zoom to 1 to remeasure —
+  // that snap-back would itself look like a zoom-in every cycle.
+  const naturalHeight = document.body.scrollHeight / zoomNow;
+  const viewportHeight = window.innerHeight;
+  const zoomOut = Math.max(0.1, Math.min(zoomNow, (viewportHeight / naturalHeight) * 0.98));
+
+  animateZoom(zoomNow, zoomOut, ZOOM_OUT_MS, scheduleNextIdle);
+}
+
+// Whether n can still grow by one more without blowing the memory budget
+// (or running past the table's own server-count ceiling).
+const MAX_N = 10;
+
+function canGrowN(r, n) {
+  return n <= MAX_N && estimateBytes(r, n) <= MEMORY_BUDGET_BYTES;
+}
+
+function onIdle() {
+  if (document.visibilityState !== 'visible' || !idleLoopEnabled) return;
+
+  const rEl = document.getElementById('r');
+  const nEl = document.getElementById('n');
+  const r = parseInt(rEl.value, 10);
+  const n = parseInt(nEl.value, 10);
+
+  if (Number.isInteger(n) && canGrowN(r, n + 1)) {
+    nEl.value = n + 1;
+    // Linger a bit once n hits its max before rolling a fresh r/n.
+    nextIdlePause = canGrowN(r, n + 2) ? 0 : MAX_N_PAUSE_MS;
+    zoomInPending = false;
+  } else {
+    const r0 = 1 + Math.floor(Math.random() * 5);
+    const n0 = r0 + Math.floor(Math.random() * 4);
+    rEl.value = r0;
+    nEl.value = n0;
+    nextIdlePause = 0;
+    // A fresh r was just rolled — zoom back in instead of further out.
+    zoomInPending = true;
+  }
+
+  updateURL();
+
+  pendingZoomEffect = true;
+  generate();
+}
+
+function onActivity() {
+  resetZoom();
+  clearTimeout(idleTimer);
+  if (idleLoopEnabled) {
+    idleTimer = setTimeout(onIdle, IDLE_MS);
+  }
+}
+
+['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach(evt =>
+  document.addEventListener(evt, onActivity, { passive: true }));
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    onActivity();
+  } else {
+    clearTimeout(idleTimer);
+  }
+});
+
+document.getElementById('loop').addEventListener('change', e => {
+  idleLoopEnabled = e.target.checked;
+  if (idleLoopEnabled) {
+    onActivity();
+  } else {
+    clearTimeout(idleTimer);
+    resetZoom();
+  }
+});
+
 initValues();
 updateURL();
 generate();  // initial generation
+onActivity(); // start the idle timer
 </script>
 </body>
 </html>

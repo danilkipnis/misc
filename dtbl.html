@@ -601,6 +601,8 @@ function onIdle() {
     const n0 = r0 + Math.floor(Math.random() * 4);
     rEl.value = r0;
     nEl.value = n0;
+    const modeEl = document.getElementById('mode');
+    modeEl.value = modeEl.value === 'spread' ? 'packed' : 'spread';
     nextIdlePause = 0;
     // A fresh r was just rolled — zoom back in instead of further out.
     zoomInPending = true;

@@ -564,7 +564,12 @@ function doZoomEffect() {
   // scale 1 — resetting the font-size just to measure would itself
   // look like a zoom-in every cycle.
   const naturalHeight = document.body.scrollHeight / zoomNow;
-  const viewportHeight = window.innerHeight;
+  // visualViewport reports, in the same CSS-pixel space as scrollHeight,
+  // how much content is actually visible right now. window.innerHeight
+  // is the full layout viewport and can be far larger — e.g. under a
+  // browser-level page zoom or pinch-zoom — which made this always
+  // conclude "it already fits" and never shrink further.
+  const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
   const zoomOut = Math.max(0.1, Math.min(zoomNow, (viewportHeight / naturalHeight) * 0.98));
 
   animateZoom(zoomNow, zoomOut, ZOOM_OUT_MS, scheduleNextIdle);

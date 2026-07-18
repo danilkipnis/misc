@@ -10,19 +10,19 @@
     color: #e6e8ec;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     margin: 0;
-    padding: 20px;
+    padding: 1.25em;
   }
   .controls {
-    margin-bottom: 20px;
+    margin-bottom: 1.25em;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 0.5em;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   input[type=number], select, button {
     box-sizing: border-box;
-    height: 34px;
+    height: 2.125em;
     font-family: inherit;
     font-size: 0.95rem;
     background: #000;
@@ -37,22 +37,22 @@
     color: #e6e8ec;
   }
   input[type=number] {
-    padding: 6px 8px;
+    padding: 0.375em 0.5em;
     width: 7ch;
   }
   select {
-    padding: 6px 8px;
-    max-width: 100px;
+    padding: 0.375em 0.5em;
+    max-width: 6.25em;
     opacity: 1;
     transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, border-color 0.15s ease, margin 0.15s ease;
   }
   .loop-label {
     display: flex;
     align-items: center;
-    gap: 4px;
-    height: 34px;
-    padding: 0 8px;
-    max-width: 60px;
+    gap: 0.25em;
+    height: 2.125em;
+    padding: 0 0.5em;
+    max-width: 3.75em;
     opacity: 1;
     color: #777;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -69,7 +69,7 @@
   .controls:not(:focus-within):not(:hover) .loop-label {
     max-width: 0;
     opacity: 0;
-    padding: 6px 0;
+    padding: 0.375em 0;
     margin: 0;
     border-color: transparent;
     overflow: hidden;
@@ -79,10 +79,10 @@
     user-select: none;
   }
   button {
-    padding: 6px 14px;
+    padding: 0.375em 0.875em;
     cursor: pointer;
   }
-  .error { color: #ff6b6b; margin: -10px 0 16px; white-space: pre-wrap; }
+  .error { color: #ff6b6b; margin: -0.625em 0 1em; white-space: pre-wrap; }
   .error:empty { display: none; }
   pre {
     font-size: 0.9rem;
@@ -495,12 +495,22 @@ let nextIdlePause = 0;
 let zoomInPending = false;
 let idleLoopEnabled = true;
 
+// Neither CSS `zoom` (doesn't render on Chrome for Android) nor
+// `transform: scale()` (never reflows, so content already clipped by a
+// <pre>'s overflow-x:auto stays clipped forever) work everywhere. Real
+// browser zoom shrinks the effective font size and reflows around it,
+// which is exactly what reveals a table's previously-scrolled-off
+// columns. We replicate that directly: scale the root font-size (the
+// control sizing above is expressed in em/rem/ch specifically so it
+// rides along), which reflows on every engine, mobile included.
+const BASE_ROOT_FONT_SIZE = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+
 function resetZoom() {
   if (zoomAnimFrame !== null) {
     cancelAnimationFrame(zoomAnimFrame);
     zoomAnimFrame = null;
   }
-  document.body.style.zoom = '';
+  document.documentElement.style.fontSize = '';
 }
 
 // onComplete only fires when the animation runs to completion; if
@@ -513,7 +523,8 @@ function animateZoom(from, to, duration, onComplete) {
     if (startTime === null) startTime = now;
     const t = Math.min(1, (now - startTime) / duration);
     const eased = 1 - Math.pow(1 - t, 3);
-    document.body.style.zoom = from + (to - from) * eased;
+    const scale = from + (to - from) * eased;
+    document.documentElement.style.fontSize = `${BASE_ROOT_FONT_SIZE * scale}px`;
     if (t < 1) {
       zoomAnimFrame = requestAnimationFrame(step);
     } else {
@@ -525,8 +536,8 @@ function animateZoom(from, to, duration, onComplete) {
 }
 
 function currentZoom() {
-  const z = parseFloat(document.body.style.zoom);
-  return (Number.isFinite(z) && z > 0) ? z : 1;
+  const size = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return (Number.isFinite(size) && size > 0) ? size / BASE_ROOT_FONT_SIZE : 1;
 }
 
 // Only reached once the current zoom animation runs to completion
@@ -547,9 +558,11 @@ function doZoomEffect() {
     return;
   }
 
-  // Infer the fully-zoomed-in (natural) content height from what's
-  // currently measured, instead of snapping zoom to 1 to remeasure —
-  // that snap-back would itself look like a zoom-in every cycle.
+  // Font-size scaling genuinely reflows the page, so scrollHeight at
+  // the current (already shrunk) scale must be scaled back up to infer
+  // the fully-zoomed-in (natural) height instead of remeasuring at
+  // scale 1 — resetting the font-size just to measure would itself
+  // look like a zoom-in every cycle.
   const naturalHeight = document.body.scrollHeight / zoomNow;
   const viewportHeight = window.innerHeight;
   const zoomOut = Math.max(0.1, Math.min(zoomNow, (viewportHeight / naturalHeight) * 0.98));

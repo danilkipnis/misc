@@ -55,27 +55,7 @@
     opacity: 1;
     transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, border-color 0.15s ease, margin 0.15s ease;
   }
-  .loop-label {
-    display: flex;
-    align-items: center;
-    gap: 0.25em;
-    height: 2.125em;
-    padding: 0 0.5em;
-    max-width: 3.75em;
-    opacity: 1;
-    color: #777;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 0.95rem;
-    white-space: nowrap;
-    overflow: hidden;
-    cursor: pointer;
-    transition: max-width 0.15s ease, opacity 0.15s ease, padding 0.15s ease, margin 0.15s ease;
-  }
-  .loop-label:hover {
-    color: #e6e8ec;
-  }
-  .controls:not(:focus-within):not(:hover) select,
-  .controls:not(:focus-within):not(:hover) .loop-label {
+  .controls:not(:focus-within):not(:hover) select {
     max-width: 0;
     opacity: 0;
     padding: 0.375em 0;
@@ -113,9 +93,6 @@
     <option value="packed">..</option>
     <option value="spread">. .</option>
   </select>
-  <label class="loop-label" for="loop" title="auto-regenerate while idle">
-    <input type="checkbox" id="loop" checked> loop
-  </label>
   <button id="generate">dtbl</button>
 </div>
 <div class="error" id="error"></div>
@@ -503,7 +480,6 @@ let pendingZoomEffect = false;
 let zoomAnimFrame = null;
 let nextIdlePause = 0;
 let zoomInPending = false;
-let idleLoopEnabled = true;
 
 // Slow diagonal drift while idle, biased up more than left. Runs as
 // its own rAF loop independent of the zoom/onIdle cadence so it stays
@@ -591,9 +567,7 @@ function currentZoom() {
 // Only reached once the current zoom animation runs to completion
 // (resetZoom() cancels it instead if real activity interrupts it).
 function scheduleNextIdle() {
-  if (idleLoopEnabled) {
-    idleTimer = setTimeout(onIdle, IDLE_MS + nextIdlePause);
-  }
+  idleTimer = setTimeout(onIdle, IDLE_MS + nextIdlePause);
   nextIdlePause = 0;
 }
 
@@ -632,7 +606,7 @@ function canGrowN(r, n) {
 }
 
 function onIdle() {
-  if (document.visibilityState !== 'visible' || !idleLoopEnabled) return;
+  if (document.visibilityState !== 'visible') return;
 
   document.querySelector('.controls').classList.add('idle-hidden');
   startDrift();
@@ -673,9 +647,7 @@ function onActivity() {
   resetZoom();
   document.querySelector('.controls').classList.remove('idle-hidden');
   clearTimeout(idleTimer);
-  if (idleLoopEnabled) {
-    idleTimer = setTimeout(onIdle, IDLE_MS_FIRST);
-  }
+  idleTimer = setTimeout(onIdle, IDLE_MS_FIRST);
 }
 
 ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach(evt =>
@@ -686,17 +658,6 @@ document.addEventListener('visibilitychange', () => {
     onActivity();
   } else {
     clearTimeout(idleTimer);
-  }
-});
-
-document.getElementById('loop').addEventListener('change', e => {
-  idleLoopEnabled = e.target.checked;
-  if (idleLoopEnabled) {
-    onActivity();
-  } else {
-    clearTimeout(idleTimer);
-    resetZoom();
-    document.querySelector('.controls').classList.remove('idle-hidden');
   }
 });
 

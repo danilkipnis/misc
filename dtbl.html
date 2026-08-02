@@ -398,8 +398,10 @@ function updateURL() {
   params.set('n', n);
   if (mode === 'spread') params.set('mode', mode);
 
-  const newURL = `${window.location.pathname}?${params.toString()}`;
+  const query = params.toString();
+  const newURL = `${window.location.pathname}?${query}`;
   history.replaceState(null, '', newURL);
+  sessionStorage.setItem('dtbl_own_url', query);
 }
 
 function loadFromURL() {

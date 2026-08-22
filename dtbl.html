@@ -54,24 +54,6 @@
     border-color: transparent;
     overflow: hidden;
   }
-  .prompt-link {
-    color: #777;
-    text-decoration: underline;
-    font-size: 0.95rem;
-    white-space: nowrap;
-    max-width: 6.25em;
-    opacity: 1;
-    transition: max-width 0.15s ease, opacity 0.15s ease, margin 0.15s ease, color 0.15s ease;
-  }
-  .prompt-link:hover, .prompt-link:focus {
-    color: #e6e8ec;
-  }
-  .controls:not(:focus-within):not(:hover) .prompt-link {
-    max-width: 0;
-    opacity: 0;
-    margin: 0;
-    overflow: hidden;
-  }
   .rel {
     color: #666;
     user-select: none;
@@ -102,7 +84,6 @@
     <option value="packed">..</option>
     <option value="spread">. .</option>
   </select>
-  <a class="prompt-link" href="dtbl.md" title="prompt used to generate this page">prompt</a>
   <button id="generate">dtbl</button>
 </div>
 <div class="error" id="error"></div>
